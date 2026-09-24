@@ -117,6 +117,8 @@ kubectl patch secret hetzner -p '{"metadata":{"labels":{"clusterctl.cluster.x-k8
 
 The secret name and the tokens can also be customized in the cluster template.
 
+By default, CAPH calls the HCloud API at `https://api.hetzner.cloud/v1`. To use another endpoint, for example an API emulator or a test double, set the environment variable `HCLOUD_ENDPOINT` (e.g. `https://hcloud.example.com/v1`) on the `manager` container of the `caph-controller-manager` Deployment. The hcloud CLI and the hcloud cloud controller manager read the same variable. If the endpoint's certificate is issued by a private CA, set `SSL_CERT_FILE` to the path of that CA's PEM file in the container.
+
 ### Create a secret for Hetzner (Hcloud + Robot)
 
 In order for the provider integration hetzner to communicate with the Hetzner API ([HCloud API](https://docs.hetzner.cloud/) + [Robot API](https://robot.your-server.de/doc/webservice/en.html#preface)), we need to create a secret with the access data. The secret must be in the same namespace as the other CRs.

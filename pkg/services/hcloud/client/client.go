@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"runtime/debug"
 	"strings"
@@ -113,16 +114,26 @@ func (lt *LoggingTransport) RoundTrip(req *http.Request) (resp *http.Response, e
 // DebugAPICalls loggs all hcloud API calls if true.
 var DebugAPICalls bool
 
+// EndpointEnvVar is the environment variable that sets the endpoint of the HCloud API. If it is
+// unset or empty, the default endpoint of hcloud-go (https://api.hetzner.cloud/v1) is used. The
+// hcloud CLI and the hcloud cloud controller manager read the same variable.
+const EndpointEnvVar = "HCLOUD_ENDPOINT"
+
 // NewClient creates new HCloud clients.
 func (f *factory) NewClient(hcloudToken string) Client {
 	httpClient := &http.Client{}
 
-	hcloudClient := realClient{client: hcloud.NewClient(
+	opts := []hcloud.ClientOption{
 		hcloud.WithToken(hcloudToken),
 		hcloud.WithApplication("cluster-api-provider-hetzner", caphversion.Get().String()),
 		hcloud.WithInstrumentation(metrics.Registry),
 		hcloud.WithHTTPClient(httpClient),
-	)}
+	}
+	if endpoint := strings.TrimSpace(os.Getenv(EndpointEnvVar)); endpoint != "" {
+		opts = append(opts, hcloud.WithEndpoint(endpoint))
+	}
+
+	hcloudClient := realClient{client: hcloud.NewClient(opts...)}
 	if DebugAPICalls {
 		httpClient.Transport = &LoggingTransport{
 			roundTripper: httpClient.Transport,

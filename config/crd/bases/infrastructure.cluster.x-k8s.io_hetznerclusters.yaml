@@ -390,6 +390,24 @@ spec:
                       Key defines the keys that are used in the secret.
                       Need to specify either HCloudToken or both HetznerRobotUser and HetznerRobotPassword.
                     properties:
+                      hcloudCABundle:
+                        default: hcloud-ca-bundle
+                        description: |-
+                          HCloudCABundle defines the name of the key where PEM-encoded CA certificates are stored. The
+                          controller trusts them for the HCloud API of this cluster in addition to the system roots, for
+                          example for an endpoint whose certificate is issued by a private CA. If the secret has no such
+                          key or its value is empty, only the system roots are trusted. It is only used in the
+                          mgt-cluster. It is not synced to the wl-cluster.
+                        type: string
+                      hcloudEndpoint:
+                        default: hcloud-endpoint
+                        description: |-
+                          HCloudEndpoint defines the name of the key where the endpoint of the HCloud API is stored, for
+                          example "https://api.hetzner.cloud/v1". If the secret has no such key or its value is empty,
+                          the controller uses the environment variable HCLOUD_ENDPOINT of its own process, and if that is
+                          unset, https://api.hetzner.cloud/v1. It is only used in the mgt-cluster. It is not synced to
+                          the wl-cluster.
+                        type: string
                       hcloudToken:
                         description: |-
                           HCloudToken defines the name of the key where the token for the Hetzner Cloud API is stored.
@@ -1138,6 +1156,24 @@ spec:
                       Key defines the keys that are used in the secret.
                       Need to specify either HCloudToken or both HetznerRobotUser and HetznerRobotPassword.
                     properties:
+                      hcloudCABundle:
+                        default: hcloud-ca-bundle
+                        description: |-
+                          HCloudCABundle defines the name of the key where PEM-encoded CA certificates are stored. The
+                          controller trusts them for the HCloud API of this cluster in addition to the system roots, for
+                          example for an endpoint whose certificate is issued by a private CA. If the secret has no such
+                          key or its value is empty, only the system roots are trusted. It is only used in the
+                          mgt-cluster. It is not synced to the wl-cluster.
+                        type: string
+                      hcloudEndpoint:
+                        default: hcloud-endpoint
+                        description: |-
+                          HCloudEndpoint defines the name of the key where the endpoint of the HCloud API is stored, for
+                          example "https://api.hetzner.cloud/v1". If the secret has no such key or its value is empty,
+                          the controller uses the environment variable HCLOUD_ENDPOINT of its own process, and if that is
+                          unset, https://api.hetzner.cloud/v1. It is only used in the mgt-cluster. It is not synced to
+                          the wl-cluster.
+                        type: string
                       hcloudToken:
                         description: |-
                           HCloudToken defines the name of the key where the token for the Hetzner Cloud API is stored.

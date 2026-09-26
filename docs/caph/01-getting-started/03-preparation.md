@@ -137,7 +137,15 @@ kubectl patch secret hetzner -p '{"metadata":{"labels":{"clusterctl.cluster.x-k8
 
 The secret name and the tokens can also be customized in the cluster template.
 
-By default, CAPH calls the HCloud API at `https://api.hetzner.cloud/v1`. To use another endpoint, for example an API emulator or a test double, set the environment variable `HCLOUD_ENDPOINT` (e.g. `https://hcloud.example.com/v1`) on the `manager` container of the `caph-controller-manager` Deployment. The hcloud CLI and the hcloud cloud controller manager read the same variable. If the endpoint's certificate is issued by a private CA, set `SSL_CERT_FILE` to the path of that CA's PEM file in the container.
+By default, CAPH calls the HCloud API at `https://api.hetzner.cloud/v1`. To use another endpoint for a cluster, for example an API emulator or a test double, add the key `hcloud-endpoint` (e.g. `https://hcloud.example.com/v1`) to its secret. If that endpoint's certificate is issued by a private CA, add the CA's PEM certificates under the key `hcloud-ca-bundle`. CAPH trusts them for this cluster's HCloud API only, in addition to the system roots, so one CAPH can manage clusters on Hetzner and on other endpoints side by side. The key names can be changed with `spec.hetznerSecretRef.key.hcloudEndpoint` and `spec.hetznerSecretRef.key.hcloudCABundle` of the HetznerCluster. Neither key is copied to the workload cluster.
+
+```shell
+kubectl create secret generic hetzner --from-literal=hcloud=$HCLOUD_TOKEN \
+  --from-literal=hcloud-endpoint=https://hcloud.example.com/v1 \
+  --from-file=hcloud-ca-bundle=ca.crt
+```
+
+For clusters whose secret has no `hcloud-endpoint`, CAPH uses the environment variable `HCLOUD_ENDPOINT` of the `manager` container of the `caph-controller-manager` Deployment if it is set. The hcloud CLI and the hcloud cloud controller manager read the same variable.
 
 ### Create a secret for Hetzner (Hcloud + Robot)
 

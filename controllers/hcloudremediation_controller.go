@@ -266,12 +266,12 @@ func (r *HCloudRemediationReconciler) Reconcile(ctx context.Context, req reconci
 
 	// Create the scope.
 	secretManager := secretutil.NewSecretManager(log, r, r.APIReader)
-	hcloudToken, _, err := getAndValidateHCloudToken(ctx, req.Namespace, hetznerCluster, secretManager)
+	hcloudToken, hcloudClientOpts, _, err := getAndValidateHCloudToken(ctx, req.Namespace, hetznerCluster, secretManager)
 	if err != nil {
 		return hcloudTokenErrorResult(ctx, err, hcloudRemediation, r, infrav2.HCloudRemediationSummaryOpts())
 	}
 
-	hcc := r.HCloudClientFactory.NewClient(hcloudToken)
+	hcc := r.HCloudClientFactory.NewClient(hcloudToken, hcloudClientOpts...)
 
 	remediationScope, err := scope.NewHCloudRemediationScope(scope.HCloudRemediationScopeParams{
 		Client:            r,

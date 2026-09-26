@@ -143,12 +143,12 @@ func (r *HetznerBareMetalMachineReconciler) Reconcile(ctx context.Context, req r
 
 	// Create the scope.
 	secretManager := secretutil.NewSecretManager(log, r, r.APIReader)
-	hcloudToken, err := getAndValidateHCloudTokenV1Beta1(ctx, req.Namespace, hetznerCluster, secretManager)
+	hcloudToken, hcloudClientOpts, err := getAndValidateHCloudTokenV1Beta1(ctx, req.Namespace, hetznerCluster, secretManager)
 	if err != nil {
 		return hcloudTokenErrorResultV1Beta1(ctx, err, hbmMachine, r, infrav1.HetznerBareMetalMachineV1Beta2SummaryOpts())
 	}
 
-	hcc := r.HCloudClientFactory.NewClient(hcloudToken)
+	hcc := r.HCloudClientFactory.NewClient(hcloudToken, hcloudClientOpts...)
 
 	// Create the scope.
 	machineScope, err := scope.NewBareMetalMachineScope(scope.BareMetalMachineScopeParams{

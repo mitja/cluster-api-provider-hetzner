@@ -2340,6 +2340,8 @@ func autoConvert_v1beta1_HetznerSecretKeyRef_To_v1beta2_HetznerSecretKeyRef(in *
 	out.HetznerRobotUser = in.HetznerRobotUser
 	out.HetznerRobotPassword = in.HetznerRobotPassword
 	out.SSHKey = in.SSHKey
+	out.HCloudEndpoint = in.HCloudEndpoint
+	out.HCloudCABundle = in.HCloudCABundle
 	return nil
 }
 
@@ -2353,6 +2355,8 @@ func autoConvert_v1beta2_HetznerSecretKeyRef_To_v1beta1_HetznerSecretKeyRef(in *
 	out.HetznerRobotUser = in.HetznerRobotUser
 	out.HetznerRobotPassword = in.HetznerRobotPassword
 	out.SSHKey = in.SSHKey
+	out.HCloudEndpoint = in.HCloudEndpoint
+	out.HCloudCABundle = in.HCloudCABundle
 	return nil
 }
 

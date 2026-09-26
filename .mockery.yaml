@@ -16,3 +16,6 @@ packages:
   github.com/syself/cluster-api-provider-hetzner/pkg/services/hcloud/client:
     config:
       dir: "{{.InterfaceDir}}/mocks"
+      # Only the interfaces: a mock of the functional option type ClientOption is of no use.
+      all: False
+      include-regex: "^(Client|Factory)$"

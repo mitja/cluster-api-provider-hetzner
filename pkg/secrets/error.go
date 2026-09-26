@@ -37,3 +37,13 @@ type HCloudTokenValidationError struct{}
 func (e HCloudTokenValidationError) Error() string {
 	return "hcloud token cannot be an empty string"
 }
+
+// HCloudEndpointValidationError is returned when the HCloud API endpoint or the CA bundle for it in
+// the Hetzner secret is invalid.
+type HCloudEndpointValidationError struct {
+	Message string
+}
+
+func (e HCloudEndpointValidationError) Error() string {
+	return fmt.Sprintf("invalid HCloud API endpoint settings in Hetzner secret: %s", e.Message)
+}

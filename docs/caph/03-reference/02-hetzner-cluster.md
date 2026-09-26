@@ -337,6 +337,14 @@ Name of the key where the username for the Hetzner Robot API is stored.
 Name of the key where the password for the Hetzner Robot API is stored.
 </PropField>
 
+<PropField name="hetznerSecret.key.hcloudEndpoint" type="string" defaultValue="hcloud-endpoint" required={false}>
+Name of the key where the endpoint of the HCloud API for this cluster is stored, e.g. `https://api.hetzner.cloud/v1`. If the secret has no such key, CAPH uses the environment variable `HCLOUD_ENDPOINT` of the controller, else `https://api.hetzner.cloud/v1`. Not copied to the workload cluster.
+</PropField>
+
+<PropField name="hetznerSecret.key.hcloudCABundle" type="string" defaultValue="hcloud-ca-bundle" required={false}>
+Name of the key where PEM-encoded CA certificates are stored that CAPH trusts for the HCloud API of this cluster, in addition to the system roots. Not copied to the workload cluster.
+</PropField>
+
 </Collapsible>
 
 </PropField>

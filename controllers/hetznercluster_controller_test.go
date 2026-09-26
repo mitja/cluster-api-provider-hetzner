@@ -532,6 +532,8 @@ func TestReconcileOneWorkloadClusterSecretHetzner(t *testing.T) {
 			"custom-token":          []byte("my-token"),
 			"custom-robot-user":     []byte("my-user"),
 			"custom-robot-password": []byte("my-password"),
+			"hcloud-endpoint":       []byte("https://hcloud.example.com/v1"),
+			"hcloud-ca-bundle":      []byte("not synced"),
 		},
 	}
 
@@ -565,6 +567,9 @@ func TestReconcileOneWorkloadClusterSecretHetzner(t *testing.T) {
 	require.Equal(t, "6443", string(secret.Data["apiserver-port"]))
 
 	require.NotContains(t, secret.Data, "note")
+	// The HCloud endpoint and CA bundle are only used in the management cluster.
+	require.NotContains(t, secret.Data, "hcloud-endpoint")
+	require.NotContains(t, secret.Data, "hcloud-ca-bundle")
 }
 
 // TestReconcileOneWorkloadClusterSecretHCloud verifies that the "hcloud"

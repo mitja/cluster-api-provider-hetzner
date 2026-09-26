@@ -52,7 +52,7 @@ type cacheHCloudClient struct {
 }
 
 // NewClient gives reference to the fake client using cache for HCloud API.
-func (f *cacheHCloudClientFactory) NewClient(string) hcloudclient.Client {
+func (f *cacheHCloudClientFactory) NewClient(string, ...hcloudclient.ClientOption) hcloudclient.Client {
 	return cacheHCloudClientInstance
 }
 

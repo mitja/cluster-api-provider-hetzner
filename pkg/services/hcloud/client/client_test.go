@@ -18,6 +18,7 @@ package hcloudclient_test
 
 import (
 	"context"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -101,4 +102,123 @@ func TestNewClientUsesDefaultEndpointWithoutEnv(t *testing.T) {
 
 func ptr(s string) *string {
 	return &s
+}
+
+// serverTypesServer returns a plain HTTP server that answers ListServerTypes and counts the calls.
+func serverTypesServer(t *testing.T) (*httptest.Server, *int) {
+	t.Helper()
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, serverTypesResponse)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+func TestNewClientEndpointOption(t *testing.T) {
+	fromEnv, envCalls := serverTypesServer(t)
+	fromOption, optionCalls := serverTypesServer(t)
+	t.Setenv(hcloudclient.EndpointEnvVar, fromEnv.URL+"/v1")
+
+	t.Run("the option wins over HCLOUD_ENDPOINT", func(t *testing.T) {
+		*envCalls, *optionCalls = 0, 0
+		c := hcloudclient.NewFactory().NewClient("my-token", hcloudclient.WithEndpoint(" "+fromOption.URL+"/v1 "))
+		_, err := c.ListServerTypes(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, 1, *optionCalls)
+		require.Equal(t, 0, *envCalls)
+	})
+
+	t.Run("an empty option falls back to HCLOUD_ENDPOINT", func(t *testing.T) {
+		*envCalls, *optionCalls = 0, 0
+		c := hcloudclient.NewFactory().NewClient("my-token", hcloudclient.WithEndpoint("  "))
+		_, err := c.ListServerTypes(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, 0, *optionCalls)
+		require.Equal(t, 1, *envCalls)
+	})
+}
+
+func TestNewClientCABundleFromHTTPTestServer(t *testing.T) {
+	var calls int
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, serverTypesResponse)
+	}))
+	defer srv.Close()
+	// The httptest certificate is self-signed, so it is its own CA.
+	caBundle := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+
+	f := hcloudclient.NewFactory()
+
+	withoutCA := f.NewClient("my-token", hcloudclient.WithEndpoint(srv.URL+"/v1"))
+	_, err := withoutCA.ListServerTypes(context.Background())
+	require.ErrorContains(t, err, "certificate")
+	require.Equal(t, 0, calls)
+
+	withCA := f.NewClient("my-token", hcloudclient.WithEndpoint(srv.URL+"/v1"), hcloudclient.WithCABundle(caBundle))
+	_, err = withCA.ListServerTypes(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+}
+
+func TestValidateEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		endpoint string
+		wantErr  bool
+	}{
+		{endpoint: ""},
+		{endpoint: "  "},
+		{endpoint: "https://api.hetzner.cloud/v1"},
+		{endpoint: " https://192.168.64.1:19683/v1/ "},
+		{endpoint: "http://localhost:8080/v1"},
+		{endpoint: "api.hetzner.cloud/v1", wantErr: true},
+		{endpoint: "ftp://api.hetzner.cloud/v1", wantErr: true},
+		{endpoint: "https:///v1", wantErr: true},
+		{endpoint: "https://api.hetzner.cloud/%zz", wantErr: true},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			err := hcloudclient.ValidateEndpoint(tc.endpoint)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestParseCABundle(t *testing.T) {
+	srv := httptest.NewTLSServer(http.NotFoundHandler())
+	defer srv.Close()
+	cert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+
+	for _, tc := range []struct {
+		name      string
+		bundle    []byte
+		wantCerts int
+		wantErr   string
+	}{
+		{name: "empty", bundle: nil},
+		{name: "blank", bundle: []byte(" \n\t")},
+		{name: "one certificate", bundle: cert, wantCerts: 1},
+		{name: "two certificates with blanks around", bundle: append(append([]byte("\n"), cert...), append([]byte("\n\n"), cert...)...), wantCerts: 2},
+		{name: "comments around certificates", bundle: append(append([]byte("# CA one\n"), cert...), []byte("# end\n")...), wantCerts: 1},
+		{name: "not PEM", bundle: []byte("not a certificate"), wantErr: "no PEM-encoded certificate found"},
+		{name: "private key", bundle: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte{1, 2, 3}}), wantErr: `type "PRIVATE KEY"`},
+		{name: "broken certificate", bundle: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte{1, 2, 3}}), wantErr: "invalid CA bundle"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			certs, err := hcloudclient.ParseCABundle(tc.bundle)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, certs, tc.wantCerts)
+		})
+	}
 }

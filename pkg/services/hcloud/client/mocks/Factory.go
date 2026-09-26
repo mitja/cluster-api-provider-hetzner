@@ -20,17 +20,24 @@ func (_m *Factory) EXPECT() *Factory_Expecter {
 	return &Factory_Expecter{mock: &_m.Mock}
 }
 
-// NewClient provides a mock function with given fields: hcloudToken
-func (_m *Factory) NewClient(hcloudToken string) hcloudclient.Client {
-	ret := _m.Called(hcloudToken)
+// NewClient provides a mock function with given fields: hcloudToken, opts
+func (_m *Factory) NewClient(hcloudToken string, opts ...hcloudclient.ClientOption) hcloudclient.Client {
+	_va := make([]interface{}, len(opts))
+	for _i := range opts {
+		_va[_i] = opts[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, hcloudToken)
+	_ca = append(_ca, _va...)
+	ret := _m.Called(_ca...)
 
 	if len(ret) == 0 {
 		panic("no return value specified for NewClient")
 	}
 
 	var r0 hcloudclient.Client
-	if rf, ok := ret.Get(0).(func(string) hcloudclient.Client); ok {
-		r0 = rf(hcloudToken)
+	if rf, ok := ret.Get(0).(func(string, ...hcloudclient.ClientOption) hcloudclient.Client); ok {
+		r0 = rf(hcloudToken, opts...)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(hcloudclient.Client)
@@ -47,13 +54,21 @@ type Factory_NewClient_Call struct {
 
 // NewClient is a helper method to define mock.On call
 //   - hcloudToken string
-func (_e *Factory_Expecter) NewClient(hcloudToken interface{}) *Factory_NewClient_Call {
-	return &Factory_NewClient_Call{Call: _e.mock.On("NewClient", hcloudToken)}
+//   - opts ...hcloudclient.ClientOption
+func (_e *Factory_Expecter) NewClient(hcloudToken interface{}, opts ...interface{}) *Factory_NewClient_Call {
+	return &Factory_NewClient_Call{Call: _e.mock.On("NewClient",
+		append([]interface{}{hcloudToken}, opts...)...)}
 }
 
-func (_c *Factory_NewClient_Call) Run(run func(hcloudToken string)) *Factory_NewClient_Call {
+func (_c *Factory_NewClient_Call) Run(run func(hcloudToken string, opts ...hcloudclient.ClientOption)) *Factory_NewClient_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
+		variadicArgs := make([]hcloudclient.ClientOption, len(args)-1)
+		for i, a := range args[1:] {
+			if a != nil {
+				variadicArgs[i] = a.(hcloudclient.ClientOption)
+			}
+		}
+		run(args[0].(string), variadicArgs...)
 	})
 	return _c
 }
@@ -63,7 +78,7 @@ func (_c *Factory_NewClient_Call) Return(_a0 hcloudclient.Client) *Factory_NewCl
 	return _c
 }
 
-func (_c *Factory_NewClient_Call) RunAndReturn(run func(string) hcloudclient.Client) *Factory_NewClient_Call {
+func (_c *Factory_NewClient_Call) RunAndReturn(run func(string, ...hcloudclient.ClientOption) hcloudclient.Client) *Factory_NewClient_Call {
 	_c.Call.Return(run)
 	return _c
 }

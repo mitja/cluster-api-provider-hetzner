@@ -191,12 +191,12 @@ func (r *HCloudMachineTemplateReconciler) Reconcile(ctx context.Context, req rec
 
 	// Create the scope.
 	secretManager := secretutil.NewSecretManager(log, r, r.APIReader)
-	hcloudToken, _, err := getAndValidateHCloudToken(ctx, req.Namespace, hetznerCluster, secretManager)
+	hcloudToken, hcloudClientOpts, _, err := getAndValidateHCloudToken(ctx, req.Namespace, hetznerCluster, secretManager)
 	if err != nil {
 		return hcloudTokenErrorResult(ctx, err, machineTemplate, r, infrav1.HCloudMachineTemplateV1Beta2SummaryOpts())
 	}
 
-	hcc := r.HCloudClientFactory.NewClient(hcloudToken)
+	hcc := r.HCloudClientFactory.NewClient(hcloudToken, hcloudClientOpts...)
 
 	machineTemplateScope, err := scope.NewHCloudMachineTemplateScope(scope.HCloudMachineTemplateScopeParams{
 		Logger:                &log,

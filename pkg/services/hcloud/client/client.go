@@ -18,14 +18,22 @@ limitations under the License.
 package hcloudclient
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"runtime/debug"
 	"strings"
+	"sync"
 
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -85,7 +93,82 @@ type Client interface {
 // Factory is the interface for creating new Client objects.
 type Factory interface {
 	// NewClient returns a new Client in the real implementation, and the shared global Client in the fake implementation.
-	NewClient(hcloudToken string) Client
+	NewClient(hcloudToken string, opts ...ClientOption) Client
+}
+
+// ClientOption configures a Client that a Factory creates.
+type ClientOption func(*clientOptions)
+
+type clientOptions struct {
+	endpoint string
+	caBundle []byte
+}
+
+// WithEndpoint sets the endpoint of the HCloud API, for example "https://api.hetzner.cloud/v1".
+// Surrounding whitespace is ignored. An empty endpoint leaves the default: the environment variable
+// HCLOUD_ENDPOINT if it is set, else the default endpoint of hcloud-go. Callers should check the
+// value with ValidateEndpoint first.
+func WithEndpoint(endpoint string) ClientOption {
+	return func(o *clientOptions) {
+		o.endpoint = strings.TrimSpace(endpoint)
+	}
+}
+
+// WithCABundle adds PEM-encoded CA certificates to the system roots that the client trusts. They
+// apply to this client only. An empty (or blank) bundle leaves the system roots alone. Callers
+// should check the bundle with ParseCABundle first: a client built with an invalid bundle fails
+// every request.
+func WithCABundle(caBundle []byte) ClientOption {
+	return func(o *clientOptions) {
+		o.caBundle = bytes.TrimSpace(caBundle)
+	}
+}
+
+// ValidateEndpoint checks that endpoint is an absolute http or https URL. An empty (or blank)
+// endpoint is valid and means the default.
+func ValidateEndpoint(endpoint string) error {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return nil
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("invalid HCloud API endpoint %q: %w", endpoint, err)
+	}
+	if (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return fmt.Errorf("invalid HCloud API endpoint %q: want an absolute http or https URL", endpoint)
+	}
+	return nil
+}
+
+// ParseCABundle parses PEM-encoded CA certificates. Every PEM block must be a certificate that
+// parses, and at least one is required. Text outside of PEM blocks (comments, as in system bundles)
+// is ignored. An empty (or blank) bundle returns (nil, nil).
+func ParseCABundle(caBundle []byte) ([]*x509.Certificate, error) {
+	rest := bytes.TrimSpace(caBundle)
+	if len(rest) == 0 {
+		return nil, nil
+	}
+	var certs []*x509.Certificate
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("invalid CA bundle: PEM block of type %q, want CERTIFICATE", block.Type)
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CA bundle: %w", err)
+		}
+		certs = append(certs, cert)
+	}
+	if len(certs) == 0 {
+		return nil, errors.New("invalid CA bundle: no PEM-encoded certificate found")
+	}
+	return certs, nil
 }
 
 // LoggingTransport is a struct for creating new logger for hcloud API.
@@ -120,30 +203,110 @@ var DebugAPICalls bool
 const EndpointEnvVar = "HCLOUD_ENDPOINT"
 
 // NewClient creates new HCloud clients.
-func (f *factory) NewClient(hcloudToken string) Client {
-	httpClient := &http.Client{}
+//
+// The endpoint is the one from WithEndpoint, else HCLOUD_ENDPOINT, else the default of hcloud-go.
+// A CA bundle from WithCABundle is trusted in addition to the system roots, by this client only.
+func (f *factory) NewClient(hcloudToken string, opts ...ClientOption) Client {
+	var o clientOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 
-	opts := []hcloud.ClientOption{
+	httpClient := &http.Client{}
+	if len(o.caBundle) > 0 {
+		httpClient.Transport = f.transportFor(o.caBundle)
+	}
+
+	hcloudOpts := []hcloud.ClientOption{
 		hcloud.WithToken(hcloudToken),
 		hcloud.WithApplication("cluster-api-provider-hetzner", caphversion.Get().String()),
 		hcloud.WithInstrumentation(metrics.Registry),
 		hcloud.WithHTTPClient(httpClient),
 	}
-	if endpoint := strings.TrimSpace(os.Getenv(EndpointEnvVar)); endpoint != "" {
-		opts = append(opts, hcloud.WithEndpoint(endpoint))
+	endpoint := o.endpoint
+	if endpoint == "" {
+		endpoint = strings.TrimSpace(os.Getenv(EndpointEnvVar))
+	}
+	if endpoint != "" {
+		hcloudOpts = append(hcloudOpts, hcloud.WithEndpoint(endpoint))
 	}
 
-	hcloudClient := realClient{client: hcloud.NewClient(opts...)}
+	hcloudClient := realClient{client: hcloud.NewClient(hcloudOpts...)}
 	if DebugAPICalls {
+		roundTripper := httpClient.Transport
+		if roundTripper == nil {
+			roundTripper = http.DefaultTransport
+		}
 		httpClient.Transport = &LoggingTransport{
-			roundTripper: httpClient.Transport,
+			roundTripper: roundTripper,
 			hcloudToken:  hcloudToken,
 		}
 	}
 	return &hcloudClient
 }
 
-type factory struct{}
+// transportFor returns the transport that trusts the system roots plus caBundle. Transports are
+// cached by the bundle's hash: clients are created per reconcile, and a new transport each time
+// would throw away its connection pool and do a new TLS handshake for every reconcile.
+func (f *factory) transportFor(caBundle []byte) http.RoundTripper {
+	key := sha256.Sum256(caBundle)
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if rt, ok := f.transports[key]; ok {
+		return rt
+	}
+	rt := newCABundleTransport(caBundle)
+	if f.transports == nil {
+		f.transports = make(map[[sha256.Size]byte]http.RoundTripper)
+	}
+	f.transports[key] = rt
+	return rt
+}
+
+// newCABundleTransport clones http.DefaultTransport and makes it trust the system roots plus
+// caBundle. If caBundle is invalid, the returned transport fails every request.
+func newCABundleTransport(caBundle []byte) http.RoundTripper {
+	certs, err := ParseCABundle(caBundle)
+	if err != nil {
+		return errorTransport{err: err}
+	}
+	pool, err := systemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	for _, cert := range certs {
+		pool.AddCert(cert)
+	}
+
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return errorTransport{err: errors.New("http.DefaultTransport is not an *http.Transport")}
+	}
+	transport := base.Clone()
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	transport.TLSClientConfig.RootCAs = pool
+	return transport
+}
+
+// systemCertPool returns a copy of the system roots. Tests replace it.
+var systemCertPool = x509.SystemCertPool
+
+// errorTransport fails every request with err.
+type errorTransport struct {
+	err error
+}
+
+func (t errorTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, t.err
+}
+
+type factory struct {
+	mu         sync.Mutex
+	transports map[[sha256.Size]byte]http.RoundTripper
+}
 
 var _ = Factory(&factory{})
 

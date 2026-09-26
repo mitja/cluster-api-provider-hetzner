@@ -182,6 +182,26 @@ type HetznerSecretKeyRef struct {
 	// +optional
 	// +kubebuilder:default=hcloud-ssh-key-name
 	SSHKey string `json:"sshKey"`
+
+	// HCloudEndpoint defines the name of the key where the endpoint of the HCloud API is stored, for
+	// example "https://api.hetzner.cloud/v1". If the secret has no such key or its value is empty,
+	// the controller uses the environment variable HCLOUD_ENDPOINT of its own process, and if that is
+	// unset, https://api.hetzner.cloud/v1. It is only used in the mgt-cluster. It is not synced to
+	// the wl-cluster.
+	//
+	// +optional
+	// +kubebuilder:default=hcloud-endpoint
+	HCloudEndpoint string `json:"hcloudEndpoint,omitempty"`
+
+	// HCloudCABundle defines the name of the key where PEM-encoded CA certificates are stored. The
+	// controller trusts them for the HCloud API of this cluster in addition to the system roots, for
+	// example for an endpoint whose certificate is issued by a private CA. If the secret has no such
+	// key or its value is empty, only the system roots are trusted. It is only used in the
+	// mgt-cluster. It is not synced to the wl-cluster.
+	//
+	// +optional
+	// +kubebuilder:default=hcloud-ca-bundle
+	HCloudCABundle string `json:"hcloudCABundle,omitempty"`
 }
 
 // PublicNetworkSpec contains specs about the public network spec of an HCloud server.

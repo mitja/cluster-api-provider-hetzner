@@ -163,7 +163,7 @@ func (r *HCloudMachineReconciler) Reconcile(ctx context.Context, req reconcile.R
 	// Create the scope.
 	secretManager := secretutil.NewSecretManager(log, r, r.APIReader)
 
-	hcloudToken, hetznerSecret, err := getAndValidateHCloudToken(ctx, req.Namespace, hetznerCluster, secretManager)
+	hcloudToken, hcloudClientOpts, hetznerSecret, err := getAndValidateHCloudToken(ctx, req.Namespace, hetznerCluster, secretManager)
 	if err != nil {
 		// On the token-error early-return, hcloudTokenErrorResult does a full
 		// Status().Update. Set the deletion markers here so they are persisted
@@ -179,7 +179,7 @@ func (r *HCloudMachineReconciler) Reconcile(ctx context.Context, req reconcile.R
 		return hcloudTokenErrorResult(ctx, err, hcloudMachine, r, infrav1.HCloudMachineV1Beta2SummaryOpts())
 	}
 
-	hcc := r.HCloudClientFactory.NewClient(hcloudToken)
+	hcc := r.HCloudClientFactory.NewClient(hcloudToken, hcloudClientOpts...)
 
 	machineScope, err := scope.NewMachineScope(scope.MachineScopeParams{
 		ClusterScopeParams: scope.ClusterScopeParams{

@@ -141,11 +141,11 @@ func (r *HetznerClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Create the scope.
 	secretManager := secretutil.NewSecretManager(log, r.Client, r.APIReader)
-	hcloudToken, hetznerSecret, err := getAndValidateHCloudToken(ctx, req.Namespace, hetznerCluster, secretManager)
+	hcloudToken, hcloudClientOpts, hetznerSecret, err := getAndValidateHCloudToken(ctx, req.Namespace, hetznerCluster, secretManager)
 	if err != nil {
 		return hcloudTokenErrorResult(ctx, err, hetznerCluster, r.Client, infrav1.ClusterV1Beta2SummaryOpts())
 	}
-	hcloudClient := r.HCloudClientFactory.NewClient(hcloudToken)
+	hcloudClient := r.HCloudClientFactory.NewClient(hcloudToken, hcloudClientOpts...)
 
 	clusterScope, err := scope.NewClusterScope(scope.ClusterScopeParams{
 		Client:         r.Client,
@@ -503,7 +503,12 @@ func reconcileRateLimit(setter v1beta1conditions.Setter, rateLimitWaitTime time.
 	return false
 }
 
-func getAndValidateHCloudToken(ctx context.Context, namespace string, hetznerCluster *infrav1.HetznerCluster, secretManager *secretutil.SecretManager) (string, *corev1.Secret, error) {
+// getAndValidateHCloudToken acquires the Hetzner secret referenced by the cluster and returns the
+// HCloud token and the options for the HCloud client from it (see hcloudClientOptions). It returns a
+// *ResolveSecretRefError if the secret is missing, a *HCloudTokenValidationError if the token is
+// empty and a *HCloudEndpointValidationError if the endpoint or the CA bundle is invalid, which
+// hcloudTokenErrorResult maps to the right conditions.
+func getAndValidateHCloudToken(ctx context.Context, namespace string, hetznerCluster *infrav1.HetznerCluster, secretManager *secretutil.SecretManager) (string, []hcloudclient.ClientOption, *corev1.Secret, error) {
 	// retrieve Hetzner secret
 	secretNamspacedName := types.NamespacedName{Namespace: namespace, Name: hetznerCluster.Spec.HetznerSecret.Name}
 
@@ -516,19 +521,64 @@ func getAndValidateHCloudToken(ctx context.Context, namespace string, hetznerClu
 	)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return "", nil, &secretutil.ResolveSecretRefError{Message: fmt.Sprintf("The Hetzner secret %s does not exist", secretNamspacedName)}
+			return "", nil, nil, &secretutil.ResolveSecretRefError{Message: fmt.Sprintf("The Hetzner secret %s does not exist", secretNamspacedName)}
 		}
-		return "", nil, err
+		return "", nil, nil, err
 	}
 
 	hcloudToken := string(hetznerSecret.Data[hetznerCluster.Spec.HetznerSecret.Key.HCloudToken])
 
 	// Validate token
 	if hcloudToken == "" {
-		return "", nil, &secretutil.HCloudTokenValidationError{}
+		return "", nil, nil, &secretutil.HCloudTokenValidationError{}
 	}
 
-	return hcloudToken, hetznerSecret, nil
+	key := hetznerCluster.Spec.HetznerSecret.Key
+	clientOpts, err := hcloudClientOptions(hetznerSecret, key.HCloudEndpoint, key.HCloudCABundle)
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	return hcloudToken, clientOpts, hetznerSecret, nil
+}
+
+// The keys of the Hetzner secret that hold the HCloud API endpoint and the CA bundle for it, when
+// spec.hetznerSecretRef.key does not name them. They match the CRD defaults, and they also apply
+// when the installed CRDs predate these fields.
+const (
+	defaultHCloudEndpointKey = "hcloud-endpoint"
+	defaultHCloudCABundleKey = "hcloud-ca-bundle"
+)
+
+// hcloudClientOptions returns the options for an HCloud client from the optional endpoint and CA
+// bundle keys of the Hetzner secret, so that each cluster can use its own HCloud API. Missing or
+// empty keys add no option: the client then uses HCLOUD_ENDPOINT or the default endpoint, and the
+// system roots. It returns a *HCloudEndpointValidationError if a value is invalid.
+func hcloudClientOptions(hetznerSecret *corev1.Secret, endpointKey, caBundleKey string) ([]hcloudclient.ClientOption, error) {
+	if endpointKey == "" {
+		endpointKey = defaultHCloudEndpointKey
+	}
+	if caBundleKey == "" {
+		caBundleKey = defaultHCloudCABundleKey
+	}
+
+	var opts []hcloudclient.ClientOption
+
+	if endpoint := string(hetznerSecret.Data[endpointKey]); endpoint != "" {
+		if err := hcloudclient.ValidateEndpoint(endpoint); err != nil {
+			return nil, &secretutil.HCloudEndpointValidationError{Message: fmt.Sprintf("key %q: %s", endpointKey, err)}
+		}
+		opts = append(opts, hcloudclient.WithEndpoint(endpoint))
+	}
+
+	if caBundle := hetznerSecret.Data[caBundleKey]; len(caBundle) > 0 {
+		if _, err := hcloudclient.ParseCABundle(caBundle); err != nil {
+			return nil, &secretutil.HCloudEndpointValidationError{Message: fmt.Sprintf("key %q: %s", caBundleKey, err)}
+		}
+		opts = append(opts, hcloudclient.WithCABundle(caBundle))
+	}
+
+	return opts, nil
 }
 
 // hcloudTokenErrorResult handles errors from getAndValidateHCloudToken, setting the appropriate
@@ -581,6 +631,24 @@ func hcloudTokenErrorResult(
 				Status:  metav1.ConditionFalse,
 				Reason:  infrav1.HCloudTokenInvalidV1Beta2Reason,
 				Message: "invalid or not specified hcloud token in Hetzner secret",
+			})
+		}
+
+	// Handled like an invalid token.
+	case *secretutil.HCloudEndpointValidationError:
+		v1beta1conditions.MarkFalse(setter,
+			infrav1.HCloudTokenAvailableCondition,
+			infrav1.HCloudCredentialsInvalidReason,
+			clusterv1beta1.ConditionSeverityError,
+			"%s",
+			inerr.Error(),
+		)
+		if hasV1Beta2 {
+			v1beta2conditions.Set(v1beta2Setter, metav1.Condition{
+				Type:    infrav1.HCloudTokenAvailableV1Beta2Condition,
+				Status:  metav1.ConditionFalse,
+				Reason:  infrav1.HCloudTokenInvalidV1Beta2Reason,
+				Message: inerr.Error(),
 			})
 		}
 

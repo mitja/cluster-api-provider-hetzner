@@ -25,6 +25,7 @@
 ## Table of Contents
 
 - [What is CAPH](#-what-is-the-cluster-api-provider-hetzner)
+- [Changes in This Fork](#-changes-in-this-fork)
 - [Documentation](#-documentation)
 - [Getting Started](#-getting-started)
 - [Version Compatibility](#%EF%B8%8F-compatibility-with-cluster-api-and-kubernetes-versions)
@@ -50,6 +51,19 @@ Key benefits include:
 CAPH enables you to have DIY Kubernetes on Hetzner at any scale, with full control over your infrastructure and clusters configuration.
 
 If you want a batteries-included solution instead, you can try [Syself](https://syself.com) free for 14 days.
+
+## 🍴 Changes in This Fork
+
+This repository is a fork of [syself/cluster-api-provider-hetzner](https://github.com/syself/cluster-api-provider-hetzner). It lets CAPH talk to an HCloud API other than `https://api.hetzner.cloud/v1`, for example an API emulator, a test double or a private cloud that implements the HCloud API. Upstream has no setting for this.
+
+| Change                                        | What it does                                                                                                                                                                                                                             |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HCloud API endpoint from `HCLOUD_ENDPOINT`    | The controller uses the endpoint from the environment variable `HCLOUD_ENDPOINT` for all clusters. The hcloud CLI and the hcloud cloud controller manager read the same variable.                                                        |
+| HCloud API endpoint and CA bundle per cluster | The Hetzner secret of a cluster takes the optional keys `hcloud-endpoint` and `hcloud-ca-bundle`. The CA certificates are trusted for this cluster's HCloud API only, so one CAPH can manage clusters on Hetzner and on other endpoints. |
+
+Both changes and their documentation are in the branch `hcloud-endpoint-secret`, on top of upstream `main`. `v1.1.8-paasbox` is the backport of the code to the upstream release `v1.1.8`. The branch `main` mirrors upstream and has no fork changes. Everything else is unchanged upstream code.
+
+See [Changes in This Fork Compared to Upstream](./docs/fork-changes.md) for the behavior, the API changes and the code changes.
 
 ## 📖 Documentation
 

@@ -146,7 +146,16 @@ func (s *Service) createOpts() (hcloud.NetworkCreateOpts, error) {
 	}, nil
 }
 
-// Delete implements deletion of the network.
+// NetworkOwnerLabel marks a network that something other than this cluster owns. Such a network is shared:
+// gardener-stack's HCloudGateway controller (components/hcloud-gateway) creates one network per NAT gateway, puts the
+// gateway server on it and labels it caph-cluster-<name>=owned for every member cluster BEFORE that cluster exists, so
+// CAPH adopts it (findNetwork) instead of creating one. Several clusters and the gateway live on it at once, so CAPH must
+// never delete it with any one of them: on delete it only drops its own label and leaves the network to its owner.
+// The value names the owner (the gateway); any value counts.
+const NetworkOwnerLabel = "paasbox.com/network-owner"
+
+// Delete implements deletion of the network. A network that names an owner (NetworkOwnerLabel) is released instead:
+// this cluster's label is removed and the network stays.
 func (s *Service) Delete(ctx context.Context) error {
 	if s.scope.HetznerCluster.Status.Network == nil {
 		// nothing to delete
@@ -154,6 +163,26 @@ func (s *Service) Delete(ctx context.Context) error {
 	}
 
 	id := s.scope.HetznerCluster.Status.Network.ID
+
+	// read the network fresh: the labels in the status are those of the last reconcile and may be stale
+	network, err := s.scope.HCloudClient.GetNetwork(ctx, id)
+	if err != nil {
+		hcloudutil.HandleRateLimitExceeded(s.scope.HetznerCluster, err, "GetNetwork")
+		if hcloud.IsError(err, hcloud.ErrorCodeNotFound) {
+			s.scope.V(1).Info("deleting network failed - not found", "id", id)
+			return nil
+		}
+		return fmt.Errorf("failed to get network %d: %w", id, err)
+	}
+	if network == nil {
+		// if resource has been deleted already then do nothing
+		s.scope.V(1).Info("deleting network failed - not found", "id", id)
+		return nil
+	}
+
+	if owner, owned := network.Labels[NetworkOwnerLabel]; owned {
+		return s.release(ctx, network, owner)
+	}
 
 	if err := s.scope.HCloudClient.DeleteNetwork(ctx, &hcloud.Network{ID: id}); err != nil {
 		hcloudutil.HandleRateLimitExceeded(s.scope.HetznerCluster, err, "DeleteNetwork")
@@ -167,6 +196,34 @@ func (s *Service) Delete(ctx context.Context) error {
 	}
 
 	record.Eventf(s.scope.HetznerCluster, "NetworkDeleted", "Deleted network with ID %v", id)
+	return nil
+}
+
+// release removes this cluster's label from a network that has an owner, keeping every other label.
+func (s *Service) release(ctx context.Context, network *hcloud.Network, owner string) error {
+	key := s.scope.HetznerCluster.ClusterTagKey()
+	if _, has := network.Labels[key]; !has {
+		s.scope.V(1).Info("network has an owner and no label of this cluster - leaving it", "id", network.ID, "owner", owner)
+		return nil
+	}
+	labels := make(map[string]string, len(network.Labels))
+	for k, v := range network.Labels {
+		if k != key {
+			labels[k] = v
+		}
+	}
+	if _, err := s.scope.HCloudClient.UpdateNetwork(ctx, network, hcloud.NetworkUpdateOpts{Labels: labels}); err != nil {
+		hcloudutil.HandleRateLimitExceeded(s.scope.HetznerCluster, err, "UpdateNetwork")
+		if hcloud.IsError(err, hcloud.ErrorCodeNotFound) {
+			s.scope.V(1).Info("releasing network failed - not found", "id", network.ID)
+			return nil
+		}
+		record.Warnf(s.scope.HetznerCluster, "NetworkReleaseFailed", "Failed to remove label %s from network with ID %v (owner %s)", key, network.ID, owner)
+		return fmt.Errorf("failed to remove label %s from network %d: %w", key, network.ID, err)
+	}
+
+	record.Eventf(s.scope.HetznerCluster, "NetworkReleased",
+		"Network with ID %v is owned by %q (%s): removed label %s, not deleted", network.ID, owner, NetworkOwnerLabel, key)
 	return nil
 }
 

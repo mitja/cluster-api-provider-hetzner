@@ -814,6 +814,38 @@ func (c *cacheHCloudClient) ListNetworks(_ context.Context, opts hcloud.NetworkL
 	return networks, nil
 }
 
+func (c *cacheHCloudClient) GetNetwork(_ context.Context, id int64) (*hcloud.Network, error) {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	n, found := c.networkCache.idMap[id]
+	if !found {
+		// hcloud-go's GetByID answers a missing network with (nil, nil)
+		return nil, nil
+	}
+	return n, nil
+}
+
+func (c *cacheHCloudClient) UpdateNetwork(_ context.Context, network *hcloud.Network, opts hcloud.NetworkUpdateOpts) (*hcloud.Network, error) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	n, found := c.networkCache.idMap[network.ID]
+	if !found {
+		return nil, hcloud.Error{Code: hcloud.ErrorCodeNotFound, Message: "not found"}
+	}
+	if opts.Name != "" {
+		delete(c.networkCache.nameMap, n.Name)
+		n.Name = opts.Name
+		c.networkCache.nameMap[n.Name] = struct{}{}
+	}
+	if opts.Labels != nil {
+		n.Labels = opts.Labels
+	}
+	if opts.ExposeRoutesToVSwitch != nil {
+		n.ExposeRoutesToVSwitch = *opts.ExposeRoutesToVSwitch
+	}
+	return n, nil
+}
+
 func (c *cacheHCloudClient) DeleteNetwork(_ context.Context, network *hcloud.Network) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()

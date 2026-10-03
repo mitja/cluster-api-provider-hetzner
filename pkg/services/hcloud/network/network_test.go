@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	infrav1 "github.com/syself/cluster-api-provider-hetzner/api/v1beta1"
 	"github.com/syself/cluster-api-provider-hetzner/pkg/utils"
 )
 
@@ -205,4 +206,73 @@ var _ = Describe("Test findNetwork", func() {
 		Expect(err).To(Equal(fmt.Errorf("found multiple networks with opts %v - not allowed", expectedOpts)))
 	})
 
+})
+
+var _ = Describe("Test Delete", func() {
+	var ownerLabels map[string]string
+
+	BeforeEach(func() {
+		ownerLabels = map[string]string{
+			"caph-cluster-hetzner-cluster": "owned",
+			"caph-cluster-other-cluster":   "owned",
+			NetworkOwnerLabel:              "gw-nbg1",
+		}
+	})
+
+	create := func(labels map[string]string) *hcloud.Network {
+		n, err := hcloudClient.CreateNetwork(context.Background(), hcloud.NetworkCreateOpts{
+			Name:    "shared",
+			IPRange: networkCidr,
+			Subnets: []hcloud.NetworkSubnet{{IPRange: networkCidr, Type: hcloud.NetworkSubnetTypeCloud}},
+			Labels:  labels,
+		})
+		Expect(err).To(BeNil())
+		hetznerCluster.Status.Network = statusFromHCloudNetwork(n)
+		return n
+	}
+
+	It("never deletes a network that names an owner: it only drops this cluster's label", func() {
+		n := create(ownerLabels)
+		// a stale status (taken before the owner label was set) must not decide
+		hetznerCluster.Status.Network.Labels = map[string]string{"caph-cluster-hetzner-cluster": "owned"}
+
+		Expect(service.Delete(context.Background())).To(Succeed())
+
+		got, err := hcloudClient.GetNetwork(context.Background(), n.ID)
+		Expect(err).To(BeNil())
+		Expect(got).ToNot(BeNil())
+		Expect(got.Labels).To(Equal(map[string]string{
+			"caph-cluster-other-cluster": "owned",
+			NetworkOwnerLabel:            "gw-nbg1",
+		}))
+
+		// a second delete (the reconcile after) is a no-op
+		Expect(service.Delete(context.Background())).To(Succeed())
+		got, err = hcloudClient.GetNetwork(context.Background(), n.ID)
+		Expect(err).To(BeNil())
+		Expect(got).ToNot(BeNil())
+	})
+
+	It("deletes a network without an owner, as before", func() {
+		n := create(map[string]string{"caph-cluster-hetzner-cluster": "owned"})
+
+		Expect(service.Delete(context.Background())).To(Succeed())
+
+		got, err := hcloudClient.GetNetwork(context.Background(), n.ID)
+		Expect(err).To(BeNil())
+		Expect(got).To(BeNil())
+		networks, err := hcloudClient.ListNetworks(context.Background(), hcloud.NetworkListOpts{})
+		Expect(err).To(BeNil())
+		Expect(networks).To(BeEmpty())
+	})
+
+	It("is a no-op for a network that is gone", func() {
+		hetznerCluster.Status.Network = &infrav1.NetworkStatus{ID: 4711}
+		Expect(service.Delete(context.Background())).To(Succeed())
+	})
+
+	It("is a no-op without a network in the status", func() {
+		hetznerCluster.Status.Network = nil
+		Expect(service.Delete(context.Background())).To(Succeed())
+	})
 })
